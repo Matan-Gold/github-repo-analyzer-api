@@ -104,6 +104,21 @@ Hybrid approach:
   - one retry for LLM timeout
   - exponential backoff for GitHub rate limit responses
 
+## Deterministic Evaluation Layer
+
+After final LLM output is parsed, the pipeline runs deterministic grounding checks:
+
+- Technology validation:
+  - dependency evidence extracted from dependency/config files
+  - language inference from repository extensions
+  - non-evidenced technologies filtered out unless safe-generic
+- Structure grounding:
+  - structure points are checked against repository paths
+  - unsupported path claims are dropped or softened to generic wording
+- Confidence scoring:
+  - internal evidence score is computed from validated vs original items
+  - score is currently internal and not returned in API response
+
 ## Python Version
 
 - Compatible: Python 3.9+
@@ -177,6 +192,26 @@ curl -X POST http://localhost:8000/summarize \
   -d '{"github_url": "https://github.com/psf/requests"}'
 ```
 
+## Tests
+
+Unit tests (default):
+
+```bash
+pytest -q
+```
+
+Optional live integration test (disabled by default):
+
+```bash
+RUN_INTEGRATION=1 NEBIUS_API_KEY=YOUR_KEY pytest -q tests/integration/test_integration_live.py
+```
+
+Notes:
+
+- Integration test runs only when `RUN_INTEGRATION=1` and `NEBIUS_API_KEY` are set.
+- Integration test calls a real running endpoint at `INTEGRATION_BASE_URL` (default `http://localhost:8000`).
+- Test suite uses `pytest` and mocking via `monkeypatch` (plus `respx`/`httpx` dependencies for HTTP test tooling).
+
 ## Environment Variables
 
 - `NEBIUS_API_KEY` (required)
@@ -189,10 +224,13 @@ curl -X POST http://localhost:8000/summarize \
 - `github_service.py`: GitHub URL parsing, tree/content fetch, filtering, deterministic fallback selection.
 - `llm_service.py`: Nebius/OpenAI wrapper with strict JSON parsing + retry policy.
 - `summarizer.py`: Orchestration for planner/chunk/final summarize pipeline.
+- `evaluation.py`: Deterministic evidence validation and confidence scoring helpers.
 - `models.py`: request/response/error model definitions.
 - `config.py`: constants and env-driven settings.
 - `utils.py`: token estimation, chunking, and path heuristics.
 - `requirements.txt`: runtime dependencies.
+- `tests/unit/`: mocked unit tests for API/pipeline behavior.
+- `tests/integration/`: optional live integration test(s).
 
 ## Submission Checklist
 

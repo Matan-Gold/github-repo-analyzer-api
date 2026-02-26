@@ -1,4 +1,5 @@
 .venv/
 .venv.py39.bak/
 __pycache__/
+.pytest_cache/
 .env
