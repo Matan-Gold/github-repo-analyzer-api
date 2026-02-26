@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import PurePosixPath
+from typing import Optional
 
 import config
 
@@ -55,7 +56,7 @@ DEPRIORITIZED_LOCKFILES = {
 }
 
 
-def estimate_tokens(text: str, model: str | None = None) -> int:
+def estimate_tokens(text: str, model: Optional[str] = None) -> int:
     if not text:
         return 0
     try:

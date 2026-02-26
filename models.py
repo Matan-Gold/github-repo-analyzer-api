@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -36,9 +36,9 @@ class RepoTreeItem(BaseModel):
 
 class SelectedFile(BaseModel):
     path: str
-    content: str | None = None
+    content: Optional[str] = None
     skipped: bool = False
-    skip_reason: str | None = None
+    skip_reason: Optional[str] = None
     source: str = "raw"
 
 

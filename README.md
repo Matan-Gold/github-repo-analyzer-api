@@ -104,6 +104,11 @@ Hybrid approach:
   - one retry for LLM timeout
   - exponential backoff for GitHub rate limit responses
 
+## Python Version
+
+- Compatible: Python 3.9+
+- Recommended for local development: Python 3.12+ (better typing/runtime tooling support).
+
 ## Error Codes
 
 - `INVALID_GITHUB_URL`
@@ -150,6 +155,19 @@ Hybrid approach:
    ```
 
 If your environment only has `python3`, replace `python` with `python3`.
+
+## Optional UV Workflow (Recommended Locally)
+
+If you use `uv`, this is a cleaner way to run with Python 3.12:
+
+```bash
+uv python install 3.12
+uv venv --python 3.12 .venv
+source .venv/bin/activate
+uv pip install -r requirements.txt
+export NEBIUS_API_KEY=YOUR_KEY
+uv run uvicorn main:app --host 0.0.0.0 --port 8000
+```
 
 ## Curl Test
 

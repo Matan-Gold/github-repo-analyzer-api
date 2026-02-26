@@ -7,7 +7,7 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
 import config
 from github_service import GitHubService
@@ -161,7 +161,11 @@ class FileRepresentation:
 
 
 class RepositorySummarizer:
-    def __init__(self, github_service: GitHubService | None = None, llm_service: LLMService | None = None) -> None:
+    def __init__(
+        self,
+        github_service: Optional[GitHubService] = None,
+        llm_service: Optional[LLMService] = None,
+    ) -> None:
         self.github_service = github_service or GitHubService()
         self.llm_service = llm_service or LLMService()
 

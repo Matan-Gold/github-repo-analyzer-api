@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from typing import Any
+from typing import Any, Optional
 
 from openai import APITimeoutError, OpenAI
 
@@ -73,7 +73,7 @@ class LLMService:
     ) -> dict[str, Any]:
         # One retry for invalid JSON, and one retry for timeout, per spec.
         reminder = "\n\nREMINDER: Return valid JSON only with the exact requested keys."
-        last_error: Exception | None = None
+        last_error: Optional[Exception] = None
 
         for attempt in range(2):
             prompt = user_prompt if attempt == 0 else user_prompt + reminder
