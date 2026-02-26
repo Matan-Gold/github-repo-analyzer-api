@@ -42,6 +42,19 @@ def test_llm_invalid_json_failure_raises_structured_error(monkeypatch):
         assert err.code == "LLM_INVALID_RESPONSE"
 
 
+def test_llm_parses_fenced_json_payload(monkeypatch):
+    service = object.__new__(LLMService)
+    service.model = "dummy"
+
+    def fake_single_call(**_kwargs):
+        return '```json\n{"important_files":["README.md"]}\n```'
+
+    monkeypatch.setattr(service, "_single_call", fake_single_call)
+    result = service.call_json(system_prompt="s", user_prompt="u", max_output_tokens=50)
+
+    assert result == {"important_files": ["README.md"]}
+
+
 class FakeGitHubService:
     def parse_github_url(self, _url):
         return "psf", "requests"
