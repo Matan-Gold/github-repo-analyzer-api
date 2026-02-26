@@ -97,6 +97,16 @@ def _looks_like_file_token(token: str, repo_paths: list[str]) -> bool:
     return len(stem) > 1 and ext.lower() in known_exts
 
 
+def _soften_unverified_path_claim(text: str, path_refs: list[str]) -> str:
+    # Remove ungrounded file-path tokens while keeping any generic structural wording.
+    softened = text
+    for ref in sorted(set(path_refs), key=len, reverse=True):
+        softened = re.sub(rf"\b{re.escape(ref)}\b", "", softened)
+    softened = re.sub(r"\s{2,}", " ", softened)
+    softened = softened.strip(" ,;:-")
+    return softened.strip()
+
+
 def extract_declared_dependencies(files_dict: dict[str, str]) -> set[str]:
     deps: set[str] = set()
 
@@ -249,10 +259,14 @@ def ground_structure_points(structure_points: list[str], repo_paths: list[str]) 
             grounded.append(text)
             continue
 
-        # If no path is grounded, keep only generic structural wording.
+        # If no path is grounded, keep only generic structural wording and remove bad path claims.
         lowered = text.lower()
         if any(term in lowered for term in GENERIC_STRUCTURE_TERMS):
-            grounded.append(f"{text} (generalized from available repository evidence).")
+            softened = _soften_unverified_path_claim(text, path_refs)
+            if softened:
+                grounded.append(f"{softened} (generalized from available repository evidence).")
+            else:
+                grounded.append("Repository structure includes generic source, configuration, and docs areas.")
     return grounded
 
 

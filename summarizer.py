@@ -189,6 +189,19 @@ def _describe_path_as_structure(path: str) -> str:
     return f"{path}: repository component included in the selected summary context."
 
 
+def _extract_path_reference(value: str) -> str | None:
+    text = value.strip().lstrip("-").strip()
+    if not text:
+        return None
+    if ":" in text:
+        head = text.split(":", maxsplit=1)[0].strip()
+        if _looks_like_path(head):
+            return head
+    if _looks_like_path(text):
+        return text
+    return None
+
+
 @dataclass
 class FileRepresentation:
     path: str
@@ -236,11 +249,31 @@ class RepositorySummarizer:
 
         available_files = [item for item in selected_files if not item.skipped and item.content]
         if not available_files:
+            # If planner picks unusable files, retry once with deterministic fallback selection.
+            fallback_paths = self.github_service.fallback_file_selection(filtered_tree)
+            if fallback_paths and fallback_paths != selected_paths:
+                selected_paths = fallback_paths
+                selected_files = self.github_service.fetch_selected_files(
+                    owner=owner,
+                    repo=repo,
+                    ref=ref,
+                    selected_paths=selected_paths,
+                    tree_map=tree_map,
+                )
+                available_files = [item for item in selected_files if not item.skipped and item.content]
+
+        if not available_files:
             raise AppError(
                 code="GITHUB_API_ERROR",
                 message="Could not retrieve any selected file contents.",
                 status_code=502,
-                details={"selected_paths": selected_paths},
+                details={
+                    "selected_paths": selected_paths,
+                    "selected_failures": [
+                        {"path": item.path, "reason": item.skip_reason or "UNKNOWN"}
+                        for item in selected_files
+                    ],
+                },
             )
 
         prepared_files = self._prepare_file_representations(available_files)
@@ -252,11 +285,31 @@ class RepositorySummarizer:
         final_user_prompt = self._render_final_user_prompt(technology_signals, bundle)
 
         # 4) Run final synthesis with constrained technology hints.
-        final_data = self.llm_service.call_json(
-            system_prompt=FINAL_SYSTEM_PROMPT,
-            user_prompt=final_user_prompt,
-            max_output_tokens=config.MAX_OUTPUT_TOKENS_FINAL,
-        )
+        try:
+            final_data = self.llm_service.call_json(
+                system_prompt=FINAL_SYSTEM_PROMPT,
+                user_prompt=final_user_prompt,
+                max_output_tokens=config.MAX_OUTPUT_TOKENS_FINAL,
+            )
+        except AppError as err:
+            if err.code != "LLM_INVALID_RESPONSE":
+                raise
+            # Large repos can still trigger malformed JSON with small models.
+            # Retry once with a tighter context bundle instead of failing immediately.
+            compact_bundle_parts = self._build_compact_bundle(prepared_files)
+            compact_bundle = self._enforce_context_budget(compact_bundle_parts, technology_signals)
+            compact_prompt = self._render_final_user_prompt(technology_signals, compact_bundle)
+            try:
+                final_data = self.llm_service.call_json(
+                    system_prompt=FINAL_SYSTEM_PROMPT,
+                    user_prompt=compact_prompt,
+                    max_output_tokens=config.MAX_OUTPUT_TOKENS_FINAL,
+                )
+            except AppError as compact_err:
+                if compact_err.code != "LLM_INVALID_RESPONSE":
+                    raise
+                # Last-resort deterministic synthesis for very large repos.
+                final_data = self._deterministic_final_fallback(prepared_files, technology_signals)
         return self._validate_final_output(
             final_data,
             technology_signals,
@@ -305,7 +358,37 @@ class RepositorySummarizer:
 
         if not selected:
             return self.github_service.fallback_file_selection(filtered_tree)
-        return selected
+        return self._rebalance_selected_paths(selected, filtered_tree)
+
+    def _rebalance_selected_paths(
+        self,
+        selected_paths: list[str],
+        filtered_tree: list[RepoTreeItem],
+    ) -> list[str]:
+        if not selected_paths:
+            return self.github_service.fallback_file_selection(filtered_tree)
+
+        top_level = {path.split("/", 1)[0] for path in selected_paths}
+        docker_count = sum(1 for path in selected_paths if os.path.basename(path).lower() == "dockerfile")
+        readme_present = any(path.lower() == "readme.md" for path in selected_paths)
+        low_diversity = len(top_level) <= 2 and len(selected_paths) >= 5
+        docker_heavy = docker_count >= max(3, len(selected_paths) // 2)
+
+        # Keep planner output unless it is clearly skewed (e.g., Dockerfile-heavy large repos).
+        if not (low_diversity or docker_heavy or not readme_present):
+            return selected_paths
+
+        fallback = self.github_service.fallback_file_selection(filtered_tree)
+        merged: list[str] = []
+        seen: set[str] = set()
+        for path in selected_paths + fallback:
+            if path in seen:
+                continue
+            seen.add(path)
+            merged.append(path)
+            if len(merged) >= config.MAX_SELECTED_FILES:
+                break
+        return merged
 
     def _build_planner_file_list(self, filtered_tree: list[RepoTreeItem]) -> str:
         lines: list[str] = []
@@ -339,6 +422,105 @@ class RepositorySummarizer:
                 )
         return prepared
 
+    def _compact_text_for_fallback(self, text: str, max_chars: int = 4_000) -> str:
+        return summarize_for_prompt(text, max_chars=max_chars)
+
+    def _build_compact_bundle(self, files: list[FileRepresentation]) -> list[tuple[str, str]]:
+        # Deterministic compact retry path for large repositories.
+        prioritized = sorted(
+            files,
+            key=lambda item: (
+                is_deprioritized(item.path),
+                item.path.count("/"),
+                len(item.text),
+            ),
+        )
+        selected = prioritized[: min(len(prioritized), max(3, config.MAX_SELECTED_FILES // 2))]
+
+        compact_parts: list[tuple[str, str]] = []
+        for item in selected:
+            compact_text = self._compact_text_for_fallback(item.text, max_chars=4_000)
+            section = f"=== FILE: {item.path} ===\n{compact_text}\n=== END FILE ==="
+            compact_parts.append((item.path, section))
+        return compact_parts
+
+    def _deterministic_final_fallback(
+        self,
+        prepared_files: list[FileRepresentation],
+        technology_signals: dict[str, list[str]],
+    ) -> dict[str, Any]:
+        # Last-resort path when final LLM JSON is repeatedly malformed.
+        prioritized = sorted(
+            prepared_files,
+            key=lambda item: (
+                item.path.lower() != "readme.md",
+                is_deprioritized(item.path),
+                item.path.count("/"),
+            ),
+        )
+        top_files = prioritized[: min(len(prioritized), 8)]
+
+        top_paths = [item.path for item in top_files]
+        top_areas = sorted({path.split("/", 1)[0] for path in top_paths})
+
+        languages = clamp_list(technology_signals.get("languages", []), 0, 6)
+        candidates = clamp_list(technology_signals.get("candidates", []), 0, 6)
+        technologies = clamp_list(languages + candidates, 1, 12)
+        if not technologies:
+            technologies = ["GitHub"]
+
+        area_preview = ", ".join(top_areas[:4]) if top_areas else "root modules"
+        language_preview = ", ".join(languages[:3]) if languages else "multiple technologies"
+        summary = (
+            f"This repository includes selected files across {len(top_areas) or 1} top-level areas "
+            f"({area_preview}). The codebase appears to use {language_preview}, with source modules, "
+            "configuration, and documentation represented in the analyzed set."
+        )
+
+        structure = [_describe_path_as_structure(path) for path in top_paths]
+        if len(structure) < 5:
+            structure.extend(
+                [
+                    "Core source modules are distributed across the main implementation directories.",
+                    "Configuration files define dependencies, tooling, and runtime behavior.",
+                    "Documentation files provide project usage and contributor guidance.",
+                ]
+            )
+
+        return {
+            "summary": summary,
+            "technologies": technologies,
+            "structure": clamp_list(structure, 0, 15),
+        }
+
+    def _deterministic_chunk_bullets(self, chunk_text: str) -> list[str]:
+        bullets: list[str] = []
+        for raw_line in chunk_text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            if len(line) > 180:
+                line = line[:177].rstrip() + "..."
+
+            if (
+                line.startswith(("def ", "class ", "import ", "from ", "func ", "package "))
+                or ("(" in line and ")" in line and "{" in line)
+                or line.startswith(("apiVersion:", "kind:", "FROM ", "CMD ", "ENTRYPOINT "))
+            ):
+                # Prefer syntactic anchors over free-text lines for deterministic summaries.
+                bullets.append(line)
+            elif line.startswith(("module ", "require ", "name:", "version:", "dependencies:")):
+                bullets.append(line)
+
+            if len(bullets) >= 6:
+                break
+
+        if not bullets:
+            excerpt = " ".join(chunk_text.split())
+            if excerpt:
+                bullets.append(f"Chunk excerpt: {excerpt[:160].rstrip()}")
+        return bullets
+
     def _summarize_large_file(self, path: str, content: str) -> str:
         chunks = chunk_text_by_lines(content, target_tokens=config.CHUNK_TOKENS)
         if not chunks:
@@ -347,21 +529,24 @@ class RepositorySummarizer:
         # Process chunks concurrently while preserving original chunk order in merge.
         def _summarize_chunk(index_and_text: tuple[int, str]) -> tuple[int, list[str]]:
             index, chunk = index_and_text
-            data = self.llm_service.call_json(
-                system_prompt=CHUNK_SYSTEM_PROMPT,
-                user_prompt=CHUNK_USER_PROMPT.format(
-                    FILE_PATH=path,
-                    CHUNK_INDEX=index + 1,
-                    CHUNK_COUNT=len(chunks),
-                    CHUNK_TEXT=chunk,
-                ),
-                max_output_tokens=config.MAX_OUTPUT_TOKENS_CHUNK,
-            )
-            bullets = data.get("chunk_summary")
-            if not isinstance(bullets, list):
-                return index, []
-            cleaned = [str(item).strip() for item in bullets if str(item).strip()]
-            return index, cleaned
+            try:
+                data = self.llm_service.call_json(
+                    system_prompt=CHUNK_SYSTEM_PROMPT,
+                    user_prompt=CHUNK_USER_PROMPT.format(
+                        FILE_PATH=path,
+                        CHUNK_INDEX=index + 1,
+                        CHUNK_COUNT=len(chunks),
+                        CHUNK_TEXT=chunk,
+                    ),
+                    max_output_tokens=config.MAX_OUTPUT_TOKENS_CHUNK,
+                )
+                bullets = data.get("chunk_summary")
+                if not isinstance(bullets, list):
+                    return index, self._deterministic_chunk_bullets(chunk)
+                cleaned = [str(item).strip() for item in bullets if str(item).strip()]
+                return index, cleaned or self._deterministic_chunk_bullets(chunk)
+            except AppError:
+                return index, self._deterministic_chunk_bullets(chunk)
 
         summaries: list[tuple[int, list[str]]] = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=config.CONCURRENCY_LLM) as executor:
@@ -557,6 +742,7 @@ class RepositorySummarizer:
             return (1, path.count("/"))
 
         working = bundle_parts[:]
+        budget_target = min(config.SAFE_CONTEXT, 70_000)
         while working:
             joined = "\n\n".join(part for _, part in working)
             # Budget check includes full system prompt + fully-rendered user prompt + output allowance.
@@ -567,7 +753,7 @@ class RepositorySummarizer:
                 + config.MAX_OUTPUT_TOKENS_FINAL
                 + 256
             )
-            if estimated <= config.SAFE_CONTEXT:
+            if estimated <= budget_target:
                 return joined
 
             # Drop lowest-priority file first to preserve signal-bearing docs/config.
@@ -612,16 +798,23 @@ class RepositorySummarizer:
 
         tech_items = [_normalize_technology(str(item)) for item in technologies if str(item).strip()]
         structure_items = [str(item).strip() for item in structure if str(item).strip()]
-        structure_items = [
-            _describe_path_as_structure(item) if _looks_like_path(item) else item
-            for item in structure_items
-        ]
+        structure_items = ground_structure_points(structure_items, repo_paths)
+
+        repo_paths_lower = {path.lower() for path in repo_paths}
+        normalized_structure: list[str] = []
+        for item in structure_items:
+            path_ref = _extract_path_reference(item)
+            # Replace grounded path bullets with a consistent human-readable descriptor.
+            if path_ref and path_ref.lower() in repo_paths_lower:
+                normalized_structure.append(_describe_path_as_structure(path_ref))
+            else:
+                normalized_structure.append(item)
+        structure_items = normalized_structure
 
         files_dict = {item.path: item.text for item in prepared_files}
         dependency_set = extract_declared_dependencies(files_dict)
         inferred_langs = infer_languages_from_extensions(repo_paths)
         tech_items = validate_technologies(tech_items, dependency_set, inferred_langs)
-        structure_items = ground_structure_points(structure_items, repo_paths)
 
         # Deterministic post-check to reduce hallucinated technologies.
         candidate_pool = clamp_list(
@@ -652,29 +845,25 @@ class RepositorySummarizer:
                 seen.add(key)
                 extra_evidenced += 1
 
-        for tech in candidate_pool:
-            if len(filtered_tech) >= 12:
-                break
-            key = tech.lower()
-            if key in seen:
-                continue
-            filtered_tech.append(tech)
-            seen.add(key)
-
         tech_items = clamp_list(filtered_tech, 0, 12)
-        if len(tech_items) < 5:
-            fallback = [item for item in candidate_pool if item.lower() not in seen]
-            tech_items = clamp_list(tech_items + fallback, 0, 12)
-        if len(tech_items) < 5:
-            # Last-resort fillers keep contract shape for sparse repos.
-            stable_defaults = [
-                "GitHub",
-                "Documentation",
-                "Configuration",
-                "Source Code",
-                "Version Control",
-            ]
-            tech_items = clamp_list(tech_items + stable_defaults, 0, 12)
+
+        if len(tech_items) < 3:
+            # Conservative top-up only when evidence is weak; avoid broad candidate stuffing.
+            language_keys = {lang.lower() for lang in tech_signals["languages"]}
+            fallback: list[str] = []
+            for item in candidate_pool:
+                key = item.lower()
+                if key in seen:
+                    continue
+                if key in language_keys or key in evidence_blob:
+                    fallback.append(item)
+                    seen.add(key)
+                if len(fallback) >= 3:
+                    break
+            tech_items = clamp_list(tech_items + fallback, 0, max(3, len(tech_items) + 3))
+
+        if not tech_items:
+            tech_items = ["GitHub"]
         if len(tech_items) > 12:
             tech_items = tech_items[:12]
 

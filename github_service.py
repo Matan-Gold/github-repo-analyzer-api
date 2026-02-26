@@ -41,12 +41,14 @@ DEPENDENCY_FILES = {
 class GitHubService:
     def __init__(self) -> None:
         self.session = requests.Session()
-        self.session.headers.update(
-            {
-                "Accept": "application/vnd.github+json",
-                "User-Agent": "github-repo-analyzer-api",
-            }
-        )
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "github-repo-analyzer-api",
+        }
+        github_token = os.getenv(config.GITHUB_TOKEN_ENV, "").strip()
+        if github_token:
+            headers["Authorization"] = f"Bearer {github_token}"
+        self.session.headers.update(headers)
 
     def parse_github_url(self, github_url: str) -> tuple[str, str]:
         normalized = github_url.strip()
