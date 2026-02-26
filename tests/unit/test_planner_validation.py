@@ -2,9 +2,9 @@ import json
 
 from fastapi.testclient import TestClient
 
-import main
-from llm_service import LLMService
-from models import AppError, RepoTreeItem, SelectedFile
+from app import main
+from app.llm_service import LLMService
+from app.models import AppError, RepoTreeItem, SelectedFile
 
 
 def test_llm_invalid_json_retries_once(monkeypatch):
@@ -88,8 +88,8 @@ class MissingKeyLLMService:
 
 def test_missing_required_keys_returns_structured_error(monkeypatch):
     fake_llm = MissingKeyLLMService()
-    monkeypatch.setattr("summarizer.GitHubService", FakeGitHubService)
-    monkeypatch.setattr("summarizer.LLMService", lambda: fake_llm)
+    monkeypatch.setattr("app.summarizer.GitHubService", FakeGitHubService)
+    monkeypatch.setattr("app.summarizer.LLMService", lambda: fake_llm)
 
     client = TestClient(main.app)
     response = client.post("/summarize", json={"github_url": "https://github.com/psf/requests"})

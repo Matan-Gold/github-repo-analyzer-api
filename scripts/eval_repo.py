@@ -13,9 +13,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import config
-from llm_judge import LLMJudge
-from models import AppError
+from app import config
+from app.llm_judge import LLMJudge
+from app.models import AppError
 
 
 def _print_mode_instructions() -> None:

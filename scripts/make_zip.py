@@ -15,6 +15,7 @@ EXCLUDE_DIRS = {
     ".pytest_cache",
     ".idea",
     ".vscode",
+    "submission",
 }
 
 EXCLUDE_FILES = {

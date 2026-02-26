@@ -9,8 +9,8 @@ from typing import Any, Optional
 
 from openai import APITimeoutError, OpenAI
 
-import config
-from models import AppError
+from app import config
+from app.models import AppError
 
 
 class LLMService:

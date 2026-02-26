@@ -13,9 +13,9 @@ from urllib.parse import quote
 
 import requests
 
-import config
-from models import AppError, RepoTreeItem, SelectedFile
-from utils import is_deprioritized, should_skip_file
+from app import config
+from app.models import AppError, RepoTreeItem, SelectedFile
+from app.utils import is_deprioritized, should_skip_file
 
 
 GITHUB_URL_RE = re.compile(

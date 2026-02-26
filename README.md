@@ -1,6 +1,7 @@
 # GitHub Repo Analyzer API
 
 FastAPI service that summarizes a public GitHub repository into strict JSON via `POST /summarize`.
+All API source modules are located under the `app/` package.
 
 ## 1) Setup (Clean Machine)
 

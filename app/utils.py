@@ -7,7 +7,7 @@ import re
 from pathlib import PurePosixPath
 from typing import Optional
 
-import config
+from app import config
 
 
 SKIP_DIR_PREFIXES = (

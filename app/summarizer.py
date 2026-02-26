@@ -9,18 +9,18 @@ import re
 from dataclasses import dataclass
 from typing import Any, Optional
 
-import config
-from evaluation import (
+from app import config
+from app.evaluation import (
     compute_confidence_score,
     extract_declared_dependencies,
     ground_structure_points,
     infer_languages_from_extensions,
     validate_technologies,
 )
-from github_service import GitHubService
-from llm_service import LLMService
-from models import AppError, RepoTreeItem, SelectedFile, SummarizeResponse
-from utils import (
+from app.github_service import GitHubService
+from app.llm_service import LLMService
+from app.models import AppError, RepoTreeItem, SelectedFile, SummarizeResponse
+from app.utils import (
     clamp_list,
     chunk_text_by_lines,
     estimate_tokens,

@@ -1,4 +1,4 @@
-from evaluation import (
+from app.evaluation import (
     extract_declared_dependencies,
     ground_structure_points,
     infer_languages_from_extensions,
