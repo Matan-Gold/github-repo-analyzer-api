@@ -1,5 +1,5 @@
-from summarizer import RepositorySummarizer
-from utils import chunk_text_by_lines
+from app.summarizer import RepositorySummarizer
+from app.utils import chunk_text_by_lines
 
 
 class DummyGitHubService:

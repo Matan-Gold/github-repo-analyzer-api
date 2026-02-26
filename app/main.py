@@ -6,8 +6,8 @@ from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from models import AppError, ErrorBody, ErrorResponse, SummarizeRequest, SummarizeResponse
-from summarizer import RepositorySummarizer
+from app.models import AppError, ErrorBody, ErrorResponse, SummarizeRequest, SummarizeResponse
+from app.summarizer import RepositorySummarizer
 
 
 app = FastAPI(title="GitHub Repo Analyzer API", version="1.0.0")

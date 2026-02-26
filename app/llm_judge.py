@@ -8,8 +8,8 @@ from typing import Any
 
 from openai import APITimeoutError, OpenAI
 
-import config
-from models import AppError
+from app import config
+from app.models import AppError
 
 
 JUDGE_SYSTEM_PROMPT = """You are a strict evaluator for repository summaries.

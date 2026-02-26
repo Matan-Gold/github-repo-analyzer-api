@@ -17,7 +17,7 @@ def _reload_config(monkeypatch, **env):
     for key, value in env.items():
         monkeypatch.setenv(key, value)
 
-    import config
+    import app.config as config
 
     return importlib.reload(config)
 

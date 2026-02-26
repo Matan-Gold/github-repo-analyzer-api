@@ -1,5 +1,19 @@
+# Environment and local secrets
+.env
+venv/
 .venv/
 .venv.py39.bak/
+
+# Python cache/build artifacts
 __pycache__/
+*.pyc
 .pytest_cache/
-.env
+
+# OS/editor noise
+.DS_Store
+.idea/
+.vscode/
+
+# Submission artifact
+submission.zip
+submission/

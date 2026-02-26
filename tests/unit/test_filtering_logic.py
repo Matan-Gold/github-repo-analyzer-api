@@ -1,6 +1,6 @@
-import config
-from github_service import GitHubService
-from models import RepoTreeItem
+from app import config
+from app.github_service import GitHubService
+from app.models import RepoTreeItem
 
 
 def test_prefilter_skips_binary_and_vendor_paths():

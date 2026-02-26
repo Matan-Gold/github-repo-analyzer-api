@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
-import main
-from models import RepoTreeItem, SelectedFile
+from app import main
+from app.models import RepoTreeItem, SelectedFile
 
 
 class FakeGitHubService:
@@ -51,8 +51,8 @@ class FakeLLMService:
 
 
 def test_post_summarize_contract(monkeypatch):
-    monkeypatch.setattr("summarizer.GitHubService", FakeGitHubService)
-    monkeypatch.setattr("summarizer.LLMService", FakeLLMService)
+    monkeypatch.setattr("app.summarizer.GitHubService", FakeGitHubService)
+    monkeypatch.setattr("app.summarizer.LLMService", FakeLLMService)
 
     client = TestClient(main.app)
     response = client.post("/summarize", json={"github_url": "https://github.com/psf/requests"})
