@@ -153,6 +153,35 @@ def _normalize_technology(value: str) -> str:
     return cleaned
 
 
+def _looks_like_path(value: str) -> bool:
+    text = value.strip()
+    if not text:
+        return False
+    if "/" in text or text.endswith((".py", ".md", ".rst", ".toml", ".json", ".yml", ".yaml", ".txt")):
+        return True
+    return bool(re.fullmatch(r"[A-Za-z0-9_.-]+\.[A-Za-z0-9]+", text))
+
+
+def _describe_path_as_structure(path: str) -> str:
+    path = path.strip()
+    base = os.path.basename(path)
+    lower = path.lower()
+
+    if lower == "readme.md":
+        return "README.md: high-level project overview and usage guidance."
+    if lower.startswith("docs/"):
+        return f"{path}: documentation section describing project behavior and workflows."
+    if base in {"pyproject.toml", "requirements.txt", "package.json", "go.mod", "cargo.toml"}:
+        return f"{path}: dependency and build configuration."
+    if base in {"dockerfile", "docker-compose.yml"}:
+        return f"{path}: container/runtime environment configuration."
+    if "test" in base.lower() or lower.startswith("tests/"):
+        return f"{path}: test coverage and validation assets."
+    if lower.startswith(("src/", "app/", "lib/")):
+        return f"{path}: core implementation module in the main source tree."
+    return f"{path}: repository component included in the selected summary context."
+
+
 @dataclass
 class FileRepresentation:
     path: str
@@ -570,6 +599,10 @@ class RepositorySummarizer:
 
         tech_items = [_normalize_technology(str(item)) for item in technologies if str(item).strip()]
         structure_items = [str(item).strip() for item in structure if str(item).strip()]
+        structure_items = [
+            _describe_path_as_structure(item) if _looks_like_path(item) else item
+            for item in structure_items
+        ]
 
         # Deterministic post-check to reduce hallucinated technologies.
         candidate_pool = clamp_list(
@@ -628,7 +661,7 @@ class RepositorySummarizer:
 
         structure_items = clamp_list(structure_items, 0, 15)
         if len(structure_items) < 5:
-            fallback_structure = [f"{item.path}: included from selected context." for item in prepared_files[:8]]
+            fallback_structure = [_describe_path_as_structure(item.path) for item in prepared_files[:8]]
             structure_items = clamp_list(structure_items + fallback_structure, 0, 15)
         if len(structure_items) < 5:
             raise AppError(
