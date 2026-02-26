@@ -10,6 +10,13 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 import config
+from evaluation import (
+    compute_confidence_score,
+    extract_declared_dependencies,
+    ground_structure_points,
+    infer_languages_from_extensions,
+    validate_technologies,
+)
 from github_service import GitHubService
 from llm_service import LLMService
 from models import AppError, RepoTreeItem, SelectedFile, SummarizeResponse
@@ -250,7 +257,12 @@ class RepositorySummarizer:
             user_prompt=final_user_prompt,
             max_output_tokens=config.MAX_OUTPUT_TOKENS_FINAL,
         )
-        return self._validate_final_output(final_data, technology_signals, prepared_files)
+        return self._validate_final_output(
+            final_data,
+            technology_signals,
+            prepared_files,
+            [item.path for item in filtered_tree],
+        )
 
     def _select_files_with_planner(self, filtered_tree: list[RepoTreeItem]) -> list[str]:
         file_list = self._build_planner_file_list(filtered_tree)
@@ -575,6 +587,7 @@ class RepositorySummarizer:
         data: dict[str, Any],
         tech_signals: dict[str, list[str]],
         prepared_files: list[FileRepresentation],
+        repo_paths: list[str],
     ) -> SummarizeResponse:
         required = {"summary", "technologies", "structure"}
         if set(data.keys()) != required:
@@ -603,6 +616,12 @@ class RepositorySummarizer:
             _describe_path_as_structure(item) if _looks_like_path(item) else item
             for item in structure_items
         ]
+
+        files_dict = {item.path: item.text for item in prepared_files}
+        dependency_set = extract_declared_dependencies(files_dict)
+        inferred_langs = infer_languages_from_extensions(repo_paths)
+        tech_items = validate_technologies(tech_items, dependency_set, inferred_langs)
+        structure_items = ground_structure_points(structure_items, repo_paths)
 
         # Deterministic post-check to reduce hallucinated technologies.
         candidate_pool = clamp_list(
@@ -669,6 +688,13 @@ class RepositorySummarizer:
                 message="Could not build a valid structure list.",
                 status_code=502,
             )
+
+        _confidence = compute_confidence_score(
+            validated_tech=tech_items,
+            original_tech=[str(item) for item in technologies],
+            grounded_structure=structure_items,
+            original_structure=[str(item) for item in structure],
+        )
 
         summary = truncate_words(summary or "Repository summary unavailable.", max_words=120)
         return SummarizeResponse(summary=summary, technologies=tech_items[:12], structure=structure_items[:15])
