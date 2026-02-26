@@ -1,211 +1,55 @@
 # GitHub Repo Analyzer API
 
-Local FastAPI service that summarizes a GitHub repository into structured JSON using Nebius Token Factory (OpenAI-compatible API).
+FastAPI service that summarizes a public GitHub repository into strict JSON via `POST /summarize`.
 
-## Endpoint
-
-- `POST /summarize`
-- Request:
-  ```json
-  {
-    "github_url": "https://github.com/psf/requests"
-  }
-  ```
-- Success response:
-  ```json
-  {
-    "summary": "string",
-    "technologies": ["string"],
-    "structure": ["string"]
-  }
-  ```
-- Error response:
-  ```json
-  {
-    "error": {
-      "code": "ERROR_CODE",
-      "message": "Human readable explanation",
-      "details": {}
-    }
-  }
-  ```
-
-## Architecture
-
-Pipeline:
-
-1. Parse and validate GitHub URL (`owner/repo`).
-2. Fetch repo metadata and default branch.
-3. Fetch recursive repository tree.
-4. Heuristic pre-filter skips generated/binary/asset files.
-5. Planner LLM selects important file paths from tree-only input.
-6. Fetch only selected file contents from GitHub.
-7. Large files are chunked and summarized; smaller files are passed as raw content.
-8. Deterministic technology extraction from dependency/config files.
-9. Final summarizer LLM produces strict JSON (`summary`, `technologies`, `structure`).
-10. Strict output validation and clamping before response.
-
-## Model and Provider
-
-- Provider base URL: `https://api.tokenfactory.nebius.com/v1/`
-- Baseline summarizer model: `meta-llama/Meta-Llama-3.1-8B-Instruct`
-- SDK: official `openai` Python SDK configured with Nebius-compatible base URL.
-- Why this model: instruction-tuned and cost-effective for planner + summarization stages.
-
-Optional larger summarizer models:
-
-- You can override the baseline via `SUMMARIZER_MODEL` when you need higher robustness on very large repositories.
-- Example:
-  ```bash
-  export SUMMARIZER_MODEL="meta-llama/Llama-3.3-70B-Instruct-fast"
-  ```
-- Default behavior remains the baseline small model unless explicitly overridden.
-
-## Security and Secrets
-
-- API key is read only from environment variable: `NEBIUS_API_KEY`.
-- No API key hardcoding in source files.
-
-## Token and Context Controls
-
-- `MAX_SELECTED_FILES = 10`
-- `MAX_FILE_BYTES = 200000`
-- `MAX_FILE_TOKENS = 8000`
-- `CHUNK_TOKENS = 2000`
-- `SAFE_CONTEXT = 100000`
-
-Behavior:
-
-- Files above byte limit are skipped.
-- Files above token threshold are chunked and summarized.
-- Final context is trimmed by dropping low-priority files first.
-- If still too large, API returns `TOKEN_OVERFLOW`.
-
-## File Selection and Filtering
-
-Hard skip examples:
-
-- Directories: `node_modules/`, `vendor/`, `third_party/`, `dist/`, `build/`, `out/`, `target/`, `coverage/`
-- Caches: `__pycache__/`, `.mypy_cache/`, `.pytest_cache/`
-- Artifacts/binaries/assets: image formats, archives, model/data binaries, `*.min.js`, `*.map`
-
-De-prioritized (not hard skipped):
-
-- Lockfiles and test files
-
-Planner fallback:
-
-- Deterministic fallback selection preserves diversity across docs, config, entrypoints, and core source files.
-
-## Technology Extraction
-
-Hybrid approach:
-
-- Deterministic extraction from files like `requirements.txt`, `pyproject.toml`, `package.json`, `go.mod`, `Cargo.toml`, `Dockerfile`, `tsconfig.json`, `setup.py`, `setup.cfg`.
-- LLM output is post-filtered to keep technologies grounded in deterministic candidates/languages, with at most two extra evidenced items.
-
-## Reliability Controls
-
-- GitHub timeout: 10s
-- LLM timeout: 60s
-- Retries:
-  - one retry for invalid LLM JSON
-  - one retry for LLM timeout
-  - exponential backoff for GitHub rate limit responses
-- JSON parsing hardening:
-  - fenced/wrapped JSON extraction for summarizer and judge responses
-- Deterministic fallback paths:
-  - chunk summarization falls back to rule-based bullet extraction when chunk JSON is invalid
-  - final synthesis retries with a compact context bundle before returning failure
-  - very large-repo edge cases can fall back to deterministic final output construction
-
-## Deterministic Evaluation Layer
-
-After final LLM output is parsed, the pipeline runs deterministic grounding checks:
-
-- Technology validation:
-  - dependency evidence extracted from dependency/config files
-  - language inference from repository extensions
-  - non-evidenced technologies filtered out unless safe-generic
-- Structure grounding:
-  - structure points are checked against repository paths
-  - unsupported path claims are dropped or softened to generic wording
-- Confidence scoring:
-  - internal evidence score is computed from validated vs original items
-  - score is currently internal and not returned in API response
-
-## Python Version
-
-- Compatible: Python 3.9+
-- Recommended for local development: Python 3.12+ (better typing/runtime tooling support).
-
-## Error Codes
-
-- `INVALID_GITHUB_URL`
-- `REPO_NOT_FOUND`
-- `GITHUB_RATE_LIMIT`
-- `GITHUB_TIMEOUT`
-- `GITHUB_API_ERROR`
-- `FILE_DECODE_ERROR`
-- `LLM_TIMEOUT`
-- `LLM_INVALID_RESPONSE`
-- `TOKEN_OVERFLOW`
-- `INTERNAL_ERROR`
-
-## Run Instructions
-
-1. Ensure Python is installed.
-2. Create virtual environment:
-   ```bash
-   python -m venv .venv
-   ```
-3. Activate:
-   ```bash
-   source .venv/bin/activate
-   ```
-   Windows:
-   ```bat
-   .venv\Scripts\activate
-   ```
-4. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-5. Set API key:
-   ```bash
-   export NEBIUS_API_KEY=YOUR_KEY
-   ```
-   Optional (recommended to avoid GitHub API rate limits):
-   ```bash
-   export GITHUB_TOKEN=YOUR_GITHUB_PAT
-   ```
-   Windows:
-   ```bat
-   set NEBIUS_API_KEY=YOUR_KEY
-   set GITHUB_TOKEN=YOUR_GITHUB_PAT
-   ```
-6. Run server:
-   ```bash
-   uvicorn main:app --host 0.0.0.0 --port 8000
-   ```
-
-If your environment only has `python3`, replace `python` with `python3`.
-
-## Optional UV Workflow (Recommended Locally)
-
-If you use `uv`, this is a cleaner way to run with Python 3.12:
+## 1) Setup (Clean Machine)
 
 ```bash
-uv python install 3.12
-uv venv --python 3.12 .venv
-source .venv/bin/activate
-uv pip install -r requirements.txt
-export NEBIUS_API_KEY=YOUR_KEY
-export GITHUB_TOKEN=YOUR_GITHUB_PAT
-uv run uvicorn main:app --host 0.0.0.0 --port 8000
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 ```
 
-## Curl Test
+Windows (PowerShell):
+
+```powershell
+python -m venv venv
+venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+## 2) Environment Variables
+
+Required:
+
+```bash
+export NEBIUS_API_KEY="YOUR_NEBIUS_API_KEY"
+```
+
+Optional (recommended for GitHub API rate limits):
+
+```bash
+export GITHUB_TOKEN="YOUR_GITHUB_PAT"
+```
+
+Optional evaluation-only flags (not needed for normal `/summarize` usage):
+
+```bash
+export ENVIRONMENT="eval"
+export ENABLE_JUDGE="1"
+export EVAL_MODEL="meta-llama/Llama-3.3-70B-Instruct-fast"
+export EVAL_SUMMARIZE_TIMEOUT_SECONDS="300"
+```
+
+Do not commit real keys to source control.
+
+## 3) Run Server (Single Entrypoint)
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+## 4) Test With curl
 
 ```bash
 curl -X POST http://localhost:8000/summarize \
@@ -213,102 +57,64 @@ curl -X POST http://localhost:8000/summarize \
   -d '{"github_url": "https://github.com/psf/requests"}'
 ```
 
-## Tests
+## 5) Model Choice
 
-Unit tests (default):
+Baseline summarizer model is `meta-llama/Meta-Llama-3.1-8B-Instruct`.
+It is instruction-following, cost-efficient, and suitable for long-context summarization workloads (128k context-class usage profile).
 
-```bash
-pytest -q
-```
-
-Optional live integration test (disabled by default):
+Optional override for difficult repositories:
 
 ```bash
-RUN_INTEGRATION=1 NEBIUS_API_KEY=YOUR_KEY pytest -q tests/integration/test_integration_live.py
+export SUMMARIZER_MODEL="meta-llama/Llama-3.3-70B-Instruct-fast"
 ```
 
-Notes:
+## 6) Repository Handling Approach
 
-- Integration test runs only when `RUN_INTEGRATION=1` and `NEBIUS_API_KEY` are set.
-- Integration test calls a real running endpoint at `INTEGRATION_BASE_URL` (default `http://localhost:8000`).
-- Test suite uses `pytest` and mocking via `monkeypatch` (plus `respx`/`httpx` dependencies for HTTP test tooling).
+The pipeline:
+
+1. Fetches repository metadata and recursive file tree.
+2. Applies heuristic pre-filtering (skip binaries/assets, `node_modules/`, `vendor/`, caches, etc.).
+3. Uses a planner step to select high-signal files under a file budget.
+4. Chunks very large files and summarizes chunk outputs before final synthesis.
+5. Runs deterministic evidence validation/grounding for technologies and structure claims.
 
 ## Optional Evaluation Mode
 
-Evaluation mode is optional and not required for grading/runtime usage.
-The judge remains disabled unless both eval flags are explicitly enabled.
+`python scripts/eval_repo.py <github_url>` calls local `/summarize` and then runs optional LLM judging.
+
+Enabled only when:
+
+- `ENVIRONMENT=eval`
+- `ENABLE_JUDGE=1`
+
+Exit codes:
+
+- `0`: pass (`overall >= 0.75` and no hallucination flags)
+- `1`: evaluated but failed threshold/flags or runtime error
+- `2`: evaluation mode disabled
+
+## Create Submission Zip
+
+Use the included cross-platform script from repo root:
 
 ```bash
-export ENVIRONMENT=eval
-export ENABLE_JUDGE=1
-export EVAL_MODEL="meta-llama/Llama-3.3-70B-Instruct-fast"
-export EVAL_SUMMARIZE_TIMEOUT_SECONDS=300
-python scripts/eval_repo.py https://github.com/psf/requests
+python scripts/make_zip.py
 ```
 
-Notes:
+This creates `submission.zip` and excludes:
 
-- `scripts/eval_repo.py` calls your local `POST /summarize` endpoint first, then runs the optional LLM judge.
-- Ensure the FastAPI server is running locally before invoking the eval script.
-- If `ENVIRONMENT` is not `eval` or `ENABLE_JUDGE` is not `1`, the script exits with code `2` and prints enablement instructions.
-- Script exit codes:
-  - `0` pass (`overall >= 0.75` and no hallucination flags)
-  - `1` evaluation ran but failed thresholds/flags or encountered runtime error
-  - `2` evaluation mode disabled (`ENVIRONMENT != eval` or `ENABLE_JUDGE != 1`)
-- If your account does not expose the default `EVAL_MODEL` value, override `EVAL_MODEL` with an available judge-capable model ID from your Nebius model list.
+- `.git/`, `venv/`, `.venv/`, `__pycache__/`, `.pytest_cache/`
+- `.env`, `.DS_Store`, editor folders
+- existing `submission.zip`
 
-## Evaluation Snapshot (Baseline Model)
+## Grader Sanity Commands
 
-Latest run snapshot using baseline summarizer model (`meta-llama/Meta-Llama-3.1-8B-Instruct`) and judge model (`meta-llama/Llama-3.3-70B-Instruct-fast`):
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+export NEBIUS_API_KEY="..."
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
 
-| Repository | Result | Notes |
-|---|---|---|
-| `coslynx/python-hello-world-starter` | Pass | `overall=0.8`, no hallucination flags |
-| `dbarnett/python-helloworld` | Pass | `overall=0.8`, no hallucination flags |
-| `psf/requests` | Pass | `overall=0.8`, no hallucination flags |
-| `pallets/flask` | Pass | `overall=0.8`, no hallucination flags |
-| `kubernetes/website` | Pass | `overall=0.8`, no hallucination flags |
-| `kubernetes/kubernetes` | Partial / Fails current gate | observed `overall=0.6-0.7`; may miss completeness under baseline model |
-
-Known limitation:
-
-- Very large monorepos can underperform completeness/faithfulness with the baseline 8B summarizer model.
-- This is expected tradeoff for cost/speed constraints in the baseline setup.
-- If needed, set `SUMMARIZER_MODEL` to a larger model for these outlier repositories.
-
-## Environment Variables
-
-- `NEBIUS_API_KEY` (required)
-- `GITHUB_TOKEN` (optional, recommended to avoid GitHub unauthenticated rate limits)
-- `NEBIUS_BASE_URL` (optional override, default `https://api.tokenfactory.nebius.com/v1/`)
-- `NEBIUS_MODEL` (optional override, default `meta-llama/Meta-Llama-3.1-8B-Instruct`)
-- `SUMMARIZER_MODEL` (optional override for `/summarize`, defaults to `NEBIUS_MODEL`)
-- `ENVIRONMENT` (optional, one of `prod`/`test`/`eval`, default `prod`)
-- `ENABLE_JUDGE` (optional, `1` to allow judge execution in eval mode; default `0`)
-- `EVAL_MODEL` (optional override for judge model, default `Meta/Llama-3.3-70B-Instruct`; override if unavailable in your account)
-- `EVAL_BASE_URL` (optional for eval script target endpoint, default `http://localhost:8000`)
-- `EVAL_SUMMARIZE_TIMEOUT_SECONDS` (optional timeout for eval script summarize call, default `300`)
-
-## Project Layout
-
-- `main.py`: FastAPI app, endpoint, and error envelope mapping.
-- `github_service.py`: GitHub URL parsing, tree/content fetch, filtering, deterministic fallback selection.
-- `llm_service.py`: Nebius/OpenAI wrapper with strict JSON parsing + retry policy.
-- `llm_judge.py`: optional eval-only LLM judge with strict JSON scoring output.
-- `summarizer.py`: Orchestration for planner/chunk/final summarize pipeline.
-- `evaluation.py`: Deterministic evidence validation and confidence scoring helpers.
-- `models.py`: request/response/error model definitions.
-- `config.py`: constants and env-driven settings.
-- `utils.py`: token estimation, chunking, and path heuristics.
-- `scripts/eval_repo.py`: optional eval-mode CLI that calls `/summarize` then judge.
-- `requirements.txt`: runtime dependencies.
-- `tests/unit/`: mocked unit tests for API/pipeline behavior.
-- `tests/integration/`: optional live integration test(s).
-
-## Submission Checklist
-
-- Source files are present in repository root.
-- `requirements.txt` includes runtime dependencies.
-- `README.md` includes clean-machine setup and curl validation command.
-- API key is supplied via `NEBIUS_API_KEY`.
-- Ready to archive and upload as zip for submission.
+Then run the curl test above.
